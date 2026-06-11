@@ -1,355 +1,430 @@
-import subprocess
+# Exercício de análise de redes no domínio do tempo em que é simulado um modelo de transformador
+
 import numpy as np
 import matplotlib.pyplot as plt
+from tkinter import filedialog
+from tkinter import Tk
 import os
-import time
-import tempfile
 
-# Caminho do executável do FEMM
-CAMINHO_FEMM = r"C:\femm42\bin\femm.exe"
+# dados do ATPDraw foram exportados em pl4 e convertidos para csv
 
+def carregar_csv():
 
-def criar_simulacao_bobina(material_isolante, permissividade_relativa):
-    """
-    Cria um script Lua e o executa no FEMM em modo batch.
-    """
-    posicoes = []
-    campos = []
+    root = Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
 
-    # Verifica se o FEMM existe
-    if not os.path.exists(CAMINHO_FEMM):
-        print(f"ERRO CRÍTICO: FEMM não encontrado em {CAMINHO_FEMM}")
-        return np.array(posicoes), np.array(campos)
+    arquivo = filedialog.askopenfilename(
+        title="Selecione o arquivo CSV",
+        filetypes=[("Arquivos CSV", "*.csv"), ("Todos os arquivos", "*.*")]
+    )
 
-    # --- Conteúdo do Script Lua OTIMIZADO ---
-    script_lua = f'''-- Script para simulação de bobina em {material_isolante}
--- Modo batch: sem interface gráfica desnecessária
-
--- Desabilita a janela de progresso para execução mais rápida
-hideconsole()
-
--- 1. Cria um novo documento eletrostático
-newdocument(0)
-
--- 2. Definição dos Materiais
-mi_addmaterial("Ar", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-mi_addmaterial("Oleo", {permissividade_relativa}, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-mi_addmaterial("Cobre", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-
--- 3. Geometria (em mm)
-raio_interno = 10
-raio_externo = 20
-raio_dominio = 50
-tensao = 1000
-
--- Desenha o domínio externo
-mi_drawcircle(0, 0, raio_dominio, 0, 360)
-mi_selectcircle(0, 0, raio_dominio, 4)
-mi_setblockprop("{material_isolante}", 1, 0, "<None>", 0, 0, 0)
-mi_clearselected()
-
--- Desenha a Bobina (Anel)
-mi_drawcircle(0, 0, raio_interno, 0, 360)
-mi_drawcircle(0, 0, raio_externo, 0, 360)
-raio_medio = (raio_interno + raio_externo) / 2
-mi_selectcircle(0, 0, raio_medio, 4)
-mi_setblockprop("Cobre", 1, 0, "<None>", 0, 0, 0)
-mi_clearselected()
-
--- 4. Condições de Contorno
-mi_selectcircle(0, 0, raio_dominio, 4)
-mi_setnodeprop(0, "0 Volts")
-mi_clearselected()
-
-mi_selectcircle(0, 0, raio_medio, 4)
-mi_setnodeprop(tensao, "Bobina HV")
-mi_clearselected()
-
--- 5. Configuração do Problema
-mi_probdef(0, "millimeters", "planar", 1e-8, 0, 30)
-
--- Salva o problema
-mi_saveas("{material_isolante}_bobina.fem")
-
--- Executa a análise (0 = sem janela de progresso)
-mi_analyze(0)
-
--- Carrega a solução
-mi_loadsolution()
-
--- 6. Extração dos Resultados
-resultados_file = "{material_isolante}_resultados.txt"
-arquivo = io.open(resultados_file, "w")
-
-if arquivo ~= nil then
-    passo = (raio_externo - raio_interno) / 100
-    for r = raio_interno, raio_externo, passo do
-        x = r
-        y = 0
-        sucesso, V, Ex, Ey = mo_getpointvalues(x, y)
-        if sucesso == 0 then
-            E_mag = math.sqrt(Ex*Ex + Ey*Ey)
-            arquivo:write(string.format("%f %f\\n", r, E_mag))
-        end
-    end
-    arquivo:close()
-end
-
--- Fecha o FEMM
-mi_close()
-'''
-
-    print(f"  Executando simulação para {material_isolante}...")
-
-    # Cria um arquivo para o script Lua na pasta atual (não temporária)
-    script_path = f"script_{material_isolante}_{int(time.time())}.lua"
-    with open(script_path, 'w', encoding='utf-8') as f:
-        f.write(script_lua)
+    root.destroy()
 
     try:
-        # Executa o FEMM em modo batch (sem interface)
-        # Usar -lua-script com caminho absoluto
-        comando = [CAMINHO_FEMM, f'-lua-script={os.path.abspath(script_path)}']
+        with open(arquivo, 'r') as f:
+            linhas = f.readlines()
 
-        resultado = subprocess.run(
-            comando,
-            capture_output=True,
-            text=True,
-            timeout=60,  # 60 segundos é suficiente
-            shell=False
-        )
+        # Dados começam na 3 linha do csv
+        dados_linhas = linhas[3:]
 
-        # Verificar se houve erro na execução
-        if resultado.returncode != 0:
-            print(f"    Código de erro: {resultado.returncode}")
+        tempo_csv = []
+        corrente_csv = []
 
-        # Mostrar saída para debug
-        if resultado.stdout:
-            print(f"    Saída: {resultado.stdout[:200]}")
+        for linha in dados_linhas:
+            linha = linha.strip()
+            if linha:
+                partes = linha.split(',')
+                if len(partes) >= 2:
+                    try:
+                        tempo = float(partes[0].strip())
+                        corrente = float(partes[1].strip())
+                        tempo_csv.append(tempo)
+                        corrente_csv.append(corrente)
+                    except ValueError:
+                        continue
 
-        # Ler o arquivo de resultados
-        resultados_path = f"{material_isolante}_resultados.txt"
+        tempo_csv = np.array(tempo_csv) * 1000  # Converter para ms
+        corrente_csv = np.array(corrente_csv)
 
-        if os.path.exists(resultados_path):
-            with open(resultados_path, 'r') as res_file:
-                for linha in res_file:
-                    partes = linha.strip().split()
-                    if len(partes) == 2:
-                        posicoes.append(float(partes[0]))
-                        campos.append(float(partes[1]))
-            os.remove(resultados_path)
-            print(f"    ✓ Simulação finalizada. {len(posicoes)} pontos extraídos.")
-        else:
-            print(f"    ✗ Arquivo de resultados não encontrado.")
-            # Listar arquivos na pasta para debug
-            arquivos = os.listdir('.')
-            print(f"    Arquivos na pasta: {[f for f in arquivos if f.endswith('.txt')]}")
+        print(f"Arquivo '{os.path.basename(arquivo)}' carregado com {len(tempo_csv)} pontos")
+        return tempo_csv, corrente_csv
 
-    except subprocess.TimeoutExpired:
-        print(f"    ✗ ERRO: Tempo limite excedido (60s) para {material_isolante}.")
     except Exception as e:
-        print(f"    ✗ ERRO FATAL: {e}")
-    finally:
-        # Limpa os arquivos temporários
-        if os.path.exists(script_path):
-            os.remove(script_path)
+        print(f"Erro ao ler o arquivo: {e}")
+        return None, None
 
-        fem_file = f"{material_isolante}_bobina.fem"
-        if os.path.exists(fem_file):
-            os.remove(fem_file)
+dt = 1e-6  # passo de tempo
+tmax = 0.2  # tempo máximo
+t = np.arange(0, tmax + dt, dt)
+N = len(t)
 
-    return np.array(posicoes), np.array(campos)
+E = 220 * np.sqrt(2)  # tensão da fonte
+f = 60  # frequência
+theta = 0  # ângulo inicial
+vs = E * np.cos(2 * np.pi * f * t + theta * np.pi / 180)
 
+# PARÂMETROS DO TRANSFORMADOR
+R1 = 1
+L1 = 0.3e-3
+R2 = 0.3
+L2 = 0.1e-3
+RM = 5e3
+n = 2
+LM1 = 10  # região linear
+LM2 = 47.6e-3  # saturado
+lb0 = 1
+C = 10e-6
 
-def testar_femm_manualmente():
-    """
-    Testa se o FEMM está funcionando corretamente
-    """
-    print("\n" + "=" * 60)
-    print("TESTE MANUAL DO FEMM")
-    print("=" * 60)
+RL1 = 2 * L1 / dt
+RL2 = 2 * L2 / dt
+RC = dt / (2 * C)
 
-    script_teste = '''hideconsole()
-newdocument(0)
-mi_addmaterial("Teste", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-mi_drawcircle(0, 0, 10, 0, 360)
-mi_saveas("teste_femm.fem")
-mi_close()
-print("SUCESSO: FEMM funcionou corretamente")
-'''
+x = np.zeros(12)
+lb = 0
+v4_ant = 0
+IL1 = 0
+IL2 = 0
+ILM = 0
+IC = 0
+RLM = 2 * LM1 / dt
 
-    script_path = "teste_femm.lua"
-    with open(script_path, 'w', encoding='utf-8') as f:
-        f.write(script_teste)
+is_current = np.zeros(N)  # Corrente da Fonte
 
-    try:
-        print(f"Executando teste com: {CAMINHO_FEMM}")
-        resultado = subprocess.run(
-            [CAMINHO_FEMM, f'-lua-script={os.path.abspath(script_path)}'],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        print(f"Retorno: {resultado.returncode}")
-        if resultado.stdout:
-            print(f"Saída: {resultado.stdout}")
-        if resultado.stderr:
-            print(f"Erro: {resultado.stderr}")
-
-        if os.path.exists("teste_femm.fem"):
-            print("✓ Arquivo .fem criado com sucesso!")
-            os.remove("teste_femm.fem")
-        else:
-            print("✗ Arquivo .fem NÃO foi criado")
-
-    except subprocess.TimeoutExpired:
-        print("✗ Teste expirou - FEMM pode estar travado")
-    except Exception as e:
-        print(f"✗ Erro no teste: {e}")
-    finally:
-        if os.path.exists(script_path):
-            os.remove(script_path)
-
-    print("=" * 60 + "\n")
+for m in range(N):
+    tempo = t[m]
 
 
-def simular_com_entrada_manual():
-    """
-    Simulação alternativa: gera arquivo .fem manualmente e pede para o usuário
-    executar a simulação no FEMM
-    """
-    print("\n" + "=" * 60)
-    print("MODO MANUAL - Simulação com FEMM")
-    print("=" * 60)
-    print("\nEste modo irá gerar arquivos .fem que você pode abrir manualmente no FEMM")
+    if abs(lb) <= lb0:
+        LM = LM1
+    else:
+        LM = LM2
 
-    for material, permissividade in [("Ar", 1.0), ("Oleo", 2.2)]:
-        print(f"\nGerando arquivo para {material}...")
+    RLM = 2 * LM / dt
 
-        script_lua = f'''newdocument(0)
-mi_addmaterial("Ar", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-mi_addmaterial("Oleo", {permissividade}, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-mi_addmaterial("Cobre", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    if tempo < 0.01:
+        # CASO 1: s1 aberta, s2 fechada
+        A = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, -1, 0, 0],
+            [0, 1/R1, -1/R1, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, -1/R1, (1/R1 + 1/RL1), -1/RL1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -1/RL1, (1/RL1 + 1/RM + 1/RLM), 0, 0, 0, 0, 0, 0, 0, -1/n],
+            [0, 0, 0, 0, 1/R2, -1/R2, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, -1/R2, (1/R2 + 1/RL2), -1/RL2, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1/RL2, 1/RL2, 0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1/RC, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = vs
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],  # isw1 = 0 (chave 1 aberta)
+            [0, 0, 0, 1, -n, 0, 0, 0, 0, 0, 0, 0],  # v4 - n*v5 = 0
+            [0, 0, 0, 0, 0, 0, 1, -1, 0, 0, 0, 0]   # v7 = v8 (chave 2 fechada)
+        ])
 
-raio_interno = 10
-raio_externo = 20
-raio_dominio = 50
-tensao = 1000
-
-mi_drawcircle(0, 0, raio_dominio, 0, 360)
-mi_selectcircle(0, 0, raio_dominio, 4)
-mi_setblockprop("{material}", 1, 0, "<None>", 0, 0, 0)
-mi_clearselected()
-
-mi_drawcircle(0, 0, raio_interno, 0, 360)
-mi_drawcircle(0, 0, raio_externo, 0, 360)
-raio_medio = (raio_interno + raio_externo) / 2
-mi_selectcircle(0, 0, raio_medio, 4)
-mi_setblockprop("Cobre", 1, 0, "<None>", 0, 0, 0)
-mi_clearselected()
-
-mi_selectcircle(0, 0, raio_dominio, 4)
-mi_setnodeprop(0, "0 Volts")
-mi_clearselected()
-
-mi_selectcircle(0, 0, raio_medio, 4)
-mi_setnodeprop(tensao, "Bobina HV")
-mi_clearselected()
-
-mi_probdef(0, "millimeters", "planar", 1e-8, 0, 30)
-mi_saveas("{material}_bobina.fem")
-mi_close()
-'''
-        script_path = f"gerar_{material}.lua"
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(script_lua)
-
-        subprocess.run([CAMINHO_FEMM, f'-lua-script={os.path.abspath(script_path)}'],
-                       capture_output=True, timeout=30)
-
-        if os.path.exists(f"{material}_bobina.fem"):
-            print(f"  ✓ Arquivo {material}_bobina.fem criado com sucesso!")
-
-        os.remove(script_path)
-
-    print("\nArquivos criados:")
-    print("  - Ar_bobina.fem")
-    print("  - Oleo_bobina.fem")
-    print("\nPara prosseguir:")
-    print("1. Abra cada arquivo no FEMM manualmente")
-    print("2. Execute a análise (Problem -> Analyze)")
-    print("3. Use o pós-processador para extrair os resultados")
-
-    return np.array([]), np.array([]), np.array([]), np.array([])
-
-
-def main():
-    print("=" * 60)
-    print("SIMULAÇÃO FEMM: AR vs ÓLEO ISOLANTE")
-    print("=" * 60)
-
-    # Verifica se o FEMM existe
-    if not os.path.exists(CAMINHO_FEMM):
-        print(f"\nERRO: FEMM não encontrado em {CAMINHO_FEMM}")
-        return
-
-    print(f"\nFEMM encontrado em: {CAMINHO_FEMM}")
-
-    # Pergunta o modo de operação
-    print("\nEscolha o modo de operação:")
-    print("1 - Automático (tenta executar a simulação diretamente)")
-    print("2 - Testar FEMM (verifica se está funcionando)")
-    print("3 - Modo manual (gera arquivos .fem para abrir no FEMM)")
-
-    opcao = input("\nDigite sua opção (1/2/3): ").strip()
-
-    if opcao == "1":
-        print("\nIniciando simulações automáticas...\n")
-
-        # Simulação para o Ar
-        print("[1/2] Ar (εr = 1.0)")
-        r_ar, E_ar = criar_simulacao_bobina("Ar", 1.0)
-
-        # Simulação para o Óleo
-        print("\n[2/2] Óleo Mineral (εr = 2.2)")
-        r_oleo, E_oleo = criar_simulacao_bobina("Oleo", 2.2)
-
-        # Verificação de Sucesso
-        if len(E_ar) == 0 or len(E_oleo) == 0:
-            print("\nFalha nas simulações. Tente o modo manual (opção 3).")
-            return
-
-        # Exibir resultados
-        E_max_ar = np.max(E_ar)
-        E_max_oleo = np.max(E_oleo)
-
-        print("\n" + "=" * 60)
-        print("RESULTADOS")
-        print("=" * 60)
-        print(f"Campo Máximo no AR:     {E_max_ar:.2f} V/mm")
-        print(f"Campo Máximo no ÓLEO:   {E_max_oleo:.2f} V/mm")
-
-        # Gráfico
-        plt.figure(figsize=(10, 6))
-        plt.plot(r_ar, E_ar, 'b-o', label='Ar', markersize=3)
-        plt.plot(r_oleo, E_oleo, 'r-s', label='Óleo', markersize=3)
-        plt.xlabel('Distância Radial (mm)')
-        plt.ylabel('Campo Elétrico (V/mm)')
-        plt.title('Comparação: Ar vs Óleo Isolante')
-        plt.legend()
-        plt.grid(True)
-        plt.show()
-
-    elif opcao == "2":
-        testar_femm_manualmente()
-
-    elif opcao == "3":
-        simular_com_entrada_manual()
+    elif tempo >= 0.01 and tempo < 0.05:
+        # CASO 2: s1 fechada, s2 fechada
+        A = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, -1, 0, 0],
+            [0, 1/R1, -1/R1, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, -1/R1, (1/R1 + 1/RL1), -1/RL1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -1/RL1, (1/RL1 + 1/RM + 1/RLM), 0, 0, 0, 0, 0, 0, 0, -1/n],
+            [0, 0, 0, 0, 1/R2, -1/R2, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, -1/R2, (1/R2 + 1/RL2), -1/RL2, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1/RL2, 1/RL2, 0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1/RC, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = vs
+            [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = v2 (chave 1 fechada)
+            [0, 0, 0, 1, -n, 0, 0, 0, 0, 0, 0, 0],  # v4 - n*v5 = 0
+            [0, 0, 0, 0, 0, 0, 1, -1, 0, 0, 0, 0]   # v7 = v8 (chave 2 fechada)
+        ])
 
     else:
-        print("Opção inválida!")
+        # CASO 3: s1 fechada, s2 aberta
+        A = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, -1, 0, 0],
+            [0, 1/R1, -1/R1, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, -1/R1, (1/R1 + 1/RL1), -1/RL1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -1/RL1, (1/RL1 + 1/RM + 1/RLM), 0, 0, 0, 0, 0, 0, 0, -1/n],
+            [0, 0, 0, 0, 1/R2, -1/R2, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, -1/R2, (1/R2 + 1/RL2), -1/RL2, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1/RL2, 1/RL2, 0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1/RC, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = vs
+            [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = v2 (chave 1 fechada)
+            [0, 0, 0, 1, -n, 0, 0, 0, 0, 0, 0, 0],  # v4 - n*v5 = 0
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]   # isw2 = 0 (chave 2 aberta)
+        ])
+
+    # Vetor b corrigido - a ordem deve corresponder às equações
+    b = np.array([
+        0,           # nó 0
+        0,           # nó 1
+        -IL1,        # nó 2 - corrente histórica do indutor L1
+        IL1 - ILM,   # nó 3
+        0,           # nó 4
+        -IL2,        # nó 5
+        IL2,         # nó 6
+        -IC,         # nó 7
+        vs[m],       # nó 8 (fonte)
+        0,           # equação da chave 1
+        0,           # equação do transformador
+        0            # equação da chave 2
+    ])
+
+    try:
+        x = np.linalg.solve(A, b)
+    except np.linalg.LinAlgError:
+        print(f"Erro: Matriz singular no tempo {tempo:.6f}s")
+        x = np.linalg.lstsq(A, b, rcond=None)[0]
+
+    # Extrair variáveis na ordem correta
+    v1, v2, v3, v4, v5, v6, v7, v8, i1, i2, isw1, isw2 = x
+    is_current[m] = -i1  # Corrente da fonte
+
+    # Atualização das variáveis históricas
+    lb = lb + (v4 + v4_ant) * dt / 2
+    v4_ant = v4
+    IL1 = 2 * (v3 - v4) / RL1 + IL1
+    IL2 = 2 * (v6 - v7) / RL2 + IL2
+    ILM = 2 * v4 / RLM + ILM
+    IC = -2 * v8 / RC - IC
+
+# Converter de segundos para milissegundos
+t_ms = t * 1000
+
+# Carregar CSV
+dados_csv = carregar_csv()
+
+# Criar gráfico
+plt.figure(figsize=(12, 6))
+
+# Plotar simulação
+plt.plot(t_ms, is_current, 'b-', linewidth=1.5, label='Modelo Proposto')
+
+# Plotar dados do CSV se disponível
+if dados_csv[0] is not None:
+    tempo_csv, corrente_csv = dados_csv
+    plt.plot(tempo_csv, corrente_csv, 'r--', linewidth=1.5,
+             label='Resultado ATPDraw', alpha=0.8)
+
+plt.xlabel('Tempo (ms)', fontsize=12)
+plt.ylabel('Corrente (A)', fontsize=12)
+plt.title('Comparação: Modelo criado x ATPDraw', fontsize=14)
+plt.grid(True, alpha=0.3)
+plt.legend(fontsize=12)
+plt.xlim([0, tmax * 1000])
+
+plt.show()# Exercício de análise de redes no domínio do tempo em que é simulado um modelo de transformador
+
+import numpy as np
+import matplotlib.pyplot as plt
+from tkinter import filedialog
+from tkinter import Tk
+import os
+
+# dados do ATPDraw foram exportados em pl4 e convertidos para csv
+
+def carregar_csv():
+
+    root = Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+
+    arquivo = filedialog.askopenfilename(
+        title="Selecione o arquivo CSV",
+        filetypes=[("Arquivos CSV", "*.csv"), ("Todos os arquivos", "*.*")]
+    )
+
+    root.destroy()
+
+    try:
+        with open(arquivo, 'r') as f:
+            linhas = f.readlines()
+
+        # Dados começam na 3 linha do csv
+        dados_linhas = linhas[3:]
+
+        tempo_csv = []
+        corrente_csv = []
+
+        for linha in dados_linhas:
+            linha = linha.strip()
+            if linha:
+                partes = linha.split(',')
+                if len(partes) >= 2:
+                    try:
+                        tempo = float(partes[0].strip())
+                        corrente = float(partes[1].strip())
+                        tempo_csv.append(tempo)
+                        corrente_csv.append(corrente)
+                    except ValueError:
+                        continue
+
+        tempo_csv = np.array(tempo_csv) * 1000  # Converter para ms
+        corrente_csv = np.array(corrente_csv)
+
+        print(f"Arquivo '{os.path.basename(arquivo)}' carregado com {len(tempo_csv)} pontos")
+        return tempo_csv, corrente_csv
+
+    except Exception as e:
+        print(f"Erro ao ler o arquivo: {e}")
+        return None, None
+
+dt = 1e-6  # passo de tempo
+tmax = 0.2  # tempo máximo
+t = np.arange(0, tmax + dt, dt)
+N = len(t)
+
+E = 220 * np.sqrt(2)  # tensão da fonte
+f = 60  # frequência
+theta = 0  # ângulo inicial
+vs = E * np.cos(2 * np.pi * f * t + theta * np.pi / 180)
+
+# PARÂMETROS DO TRANSFORMADOR
+R1 = 1
+L1 = 0.3e-3
+R2 = 0.3
+L2 = 0.1e-3
+RM = 5e3
+n = 2
+LM1 = 10  # região linear
+LM2 = 47.6e-3  # saturado
+lb0 = 1
+C = 10e-6
+
+RL1 = 2 * L1 / dt
+RL2 = 2 * L2 / dt
+RC = dt / (2 * C)
+
+x = np.zeros(12)
+lb = 0
+v4_ant = 0
+IL1 = 0
+IL2 = 0
+ILM = 0
+IC = 0
+RLM = 2 * LM1 / dt
+
+is_current = np.zeros(N)  # Corrente da Fonte
+
+for m in range(N):
+    tempo = t[m]
 
 
-if __name__ == "__main__":
-    main()
+    if abs(lb) <= lb0:
+        LM = LM1
+    else:
+        LM = LM2
+
+    RLM = 2 * LM / dt
+
+    if tempo < 0.01:
+        # CASO 1: s1 aberta, s2 fechada
+        A = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, -1, 0, 0],
+            [0, 1/R1, -1/R1, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, -1/R1, (1/R1 + 1/RL1), -1/RL1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -1/RL1, (1/RL1 + 1/RM + 1/RLM), 0, 0, 0, 0, 0, 0, 0, -1/n],
+            [0, 0, 0, 0, 1/R2, -1/R2, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, -1/R2, (1/R2 + 1/RL2), -1/RL2, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1/RL2, 1/RL2, 0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1/RC, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = vs
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],  # isw1 = 0 (chave 1 aberta)
+            [0, 0, 0, 1, -n, 0, 0, 0, 0, 0, 0, 0],  # v4 - n*v5 = 0
+            [0, 0, 0, 0, 0, 0, 1, -1, 0, 0, 0, 0]   # v7 = v8 (chave 2 fechada)
+        ])
+
+    elif tempo >= 0.01 and tempo < 0.05:
+        # CASO 2: s1 fechada, s2 fechada
+        A = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, -1, 0, 0],
+            [0, 1/R1, -1/R1, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, -1/R1, (1/R1 + 1/RL1), -1/RL1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -1/RL1, (1/RL1 + 1/RM + 1/RLM), 0, 0, 0, 0, 0, 0, 0, -1/n],
+            [0, 0, 0, 0, 1/R2, -1/R2, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, -1/R2, (1/R2 + 1/RL2), -1/RL2, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1/RL2, 1/RL2, 0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1/RC, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = vs
+            [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = v2 (chave 1 fechada)
+            [0, 0, 0, 1, -n, 0, 0, 0, 0, 0, 0, 0],  # v4 - n*v5 = 0
+            [0, 0, 0, 0, 0, 0, 1, -1, 0, 0, 0, 0]   # v7 = v8 (chave 2 fechada)
+        ])
+
+    else:
+        # CASO 3: s1 fechada, s2 aberta
+        A = np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, -1, 0, 0],
+            [0, 1/R1, -1/R1, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, -1/R1, (1/R1 + 1/RL1), -1/RL1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -1/RL1, (1/RL1 + 1/RM + 1/RLM), 0, 0, 0, 0, 0, 0, 0, -1/n],
+            [0, 0, 0, 0, 1/R2, -1/R2, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, -1/R2, (1/R2 + 1/RL2), -1/RL2, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, -1/RL2, 1/RL2, 0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1/RC, 0, 0, 1, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = vs
+            [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # v1 = v2 (chave 1 fechada)
+            [0, 0, 0, 1, -n, 0, 0, 0, 0, 0, 0, 0],  # v4 - n*v5 = 0
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]   # isw2 = 0 (chave 2 aberta)
+        ])
+
+    # Vetor b corrigido - a ordem deve corresponder às equações
+    b = np.array([
+        0,           # nó 0
+        0,           # nó 1
+        -IL1,        # nó 2 - corrente histórica do indutor L1
+        IL1 - ILM,   # nó 3
+        0,           # nó 4
+        -IL2,        # nó 5
+        IL2,         # nó 6
+        -IC,         # nó 7
+        vs[m],       # nó 8 (fonte)
+        0,           # equação da chave 1
+        0,           # equação do transformador
+        0            # equação da chave 2
+    ])
+
+    try:
+        x = np.linalg.solve(A, b)
+    except np.linalg.LinAlgError:
+        print(f"Erro: Matriz singular no tempo {tempo:.6f}s")
+        x = np.linalg.lstsq(A, b, rcond=None)[0]
+
+    # Extrair variáveis na ordem correta
+    v1, v2, v3, v4, v5, v6, v7, v8, i1, i2, isw1, isw2 = x
+    is_current[m] = -i1  # Corrente da fonte
+
+    # Atualização das variáveis históricas
+    lb = lb + (v4 + v4_ant) * dt / 2
+    v4_ant = v4
+    IL1 = 2 * (v3 - v4) / RL1 + IL1
+    IL2 = 2 * (v6 - v7) / RL2 + IL2
+    ILM = 2 * v4 / RLM + ILM
+    IC = -2 * v8 / RC - IC
+
+# Converter de segundos para milissegundos
+t_ms = t * 1000
+
+# Carregar CSV
+dados_csv = carregar_csv()
+
+# Criar gráfico
+plt.figure(figsize=(12, 6))
+
+# Plotar simulação
+plt.plot(t_ms, is_current, 'b-', linewidth=1.5, label='Modelo Proposto')
+
+# Plotar dados do CSV se disponível
+if dados_csv[0] is not None:
+    tempo_csv, corrente_csv = dados_csv
+    plt.plot(tempo_csv, corrente_csv, 'r--', linewidth=1.5,
+             label='Resultado ATPDraw', alpha=0.8)
+
+plt.xlabel('Tempo (ms)', fontsize=12)
+plt.ylabel('Corrente (A)', fontsize=12)
+plt.title('Comparação: Modelo criado x ATPDraw', fontsize=14)
+plt.grid(True, alpha=0.3)
+plt.legend(fontsize=12)
+plt.xlim([0, tmax * 1000])
+
+plt.show()
+
